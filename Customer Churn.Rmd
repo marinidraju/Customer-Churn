@@ -1,0 +1,481 @@
+
+```{r Loading Packages}
+pacman::p_load(tidyverse,MASS,car,e1071,ROCR,caret,plotly, cowplot,caTools,pROC,ggcorrplot,ggrepel,DataExplorer,GGally,gridExtra, rpart,rpart.plot,randomForest,readr,mice)
+theme_set(theme_minimal())
+```
+
+```{r Loading Data}
+telco = read.csv("TelcoCustomerChurn.csv") 
+View(telco)
+```
+
+```{r Plotting the missing values}
+plot_missing(telco)
+```
+
+```{r Factorizing senior citizen Variable}
+telco <- telco[complete.cases(telco),]
+telco$SeniorCitizen <- as.factor(ifelse(telco$SeniorCitizen==1, 'YES', 'NO'))
+```
+
+```{r Plotting Churn percentage}
+telco %>% 
+  group_by(Churn) %>% 
+  summarise(Count = n())%>% 
+  mutate(percent = prop.table(Count)*100)%>%
+  ggplot(aes(reorder(Churn, -percent), percent), fill = Churn)+
+  geom_col(fill = c("Red", "Blue"))+
+  geom_text(aes(label = sprintf("%.2f%%", percent)), hjust = 0.01,vjust = -0.5, size =3)+ 
+  theme_bw()+  
+  xlab("Churn") + 
+  ylab("Percentage")+
+  ggtitle("Customer Churn Percentage")
+```
+
+```{r Plotting churn against other variables}
+plot_grid(ggplot(telco, aes(x=gender,fill=Churn))+ geom_bar(), 
+          ggplot(telco, aes(x=SeniorCitizen,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=Partner,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=Dependents,fill=Churn))+ geom_bar(position = 'fill'))
+
+plot_grid(ggplot(telco, aes(x=InternetService,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=OnlineSecurity,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=OnlineBackup,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=DeviceProtection,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=TechSupport,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=StreamingTV,fill=Churn))+ geom_bar(position = 'fill')+theme_bw())
+
+plot_grid(ggplot(telco, aes(x=Contract,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=PaperlessBilling,fill=Churn))+ geom_bar(position = 'fill'),
+          ggplot(telco, aes(x=PaymentMethod,fill=Churn))+geom_bar(position = 'fill')+theme_bw())
+
+plot_grid(ggplot(telco, aes(y= tenure, x = "", fill = Churn)) + geom_boxplot()+ theme_bw(),
+          ggplot(telco, aes(y= MonthlyCharges, x = "", fill = Churn)) + geom_boxplot()+ theme_bw(),
+          ggplot(telco, aes(y= TotalCharges, x = "", fill = Churn)) + geom_boxplot()+ theme_bw())
+```
+
+```{r Plotting Churn against other variables}
+grid.arrange(
+  
+  ggplot(telco,aes(x = MonthlyCharges, color = Churn))+ 
+    geom_freqpoly(size=2)+
+    theme_minimal(),
+  ggplot(telco, aes(y= MonthlyCharges, x = "", fill = Churn)) + 
+    geom_boxplot()+ 
+    theme_bw()+
+    xlab(" "),
+  
+  ggplot(telco,aes(x = TotalCharges, color = Churn))+ 
+    geom_freqpoly(size=2)+
+    theme_minimal(),
+  ggplot(telco, aes(y= TotalCharges, x = "", fill = Churn)) + 
+    geom_boxplot()+ 
+    theme_bw()+
+    xlab(" "),
+  
+  ggplot(telco,aes(x = tenure, color = Churn))+ 
+    geom_freqpoly(size=2)+
+    theme_minimal(),
+  ggplot(telco, aes(y= tenure, x = "", fill = Churn)) + 
+    geom_boxplot()+ 
+    theme_bw()+
+    xlab(" ")
+  
+)
+```
+
+```{r Plotting correlation}
+telco_cor <- round(cor(telco[,c("tenure", "MonthlyCharges", "TotalCharges")]), 1)
+ggcorrplot(telco_cor,  title = "Correlation")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r Feature cleaning}
+telco <- data.frame(lapply(telco, function(x) {
+  gsub("No internet service", "No", x)}))
+
+telco <- data.frame(lapply(telco, function(x) {
+  gsub("No phone service", "No", x)}))
+```
+
+```{r Standardizing Continuous features}
+num_columns <- c("tenure", "MonthlyCharges", "TotalCharges")
+telco[num_columns] <- sapply(telco[num_columns], as.numeric)
+
+telco_int <- telco[,c("tenure", "MonthlyCharges", "TotalCharges")]
+telco_int <- data.frame(scale(telco_int))
+```
+
+```{r Binning tenure}
+telco <- mutate(telco, tenure_bin = tenure)
+telco$tenure_bin[telco$tenure_bin >=0 & telco$tenure_bin <= 12] <- '0-1 year'
+telco$tenure_bin[telco$tenure_bin > 12 & telco$tenure_bin <= 24] <- '1-2 years'
+telco$tenure_bin[telco$tenure_bin > 24 & telco$tenure_bin <= 36] <- '2-3 years'
+telco$tenure_bin[telco$tenure_bin > 36 & telco$tenure_bin <= 48] <- '3-4 years'
+telco$tenure_bin[telco$tenure_bin > 48 & telco$tenure_bin <= 60] <- '4-5 years'
+telco$tenure_bin[telco$tenure_bin > 60 & telco$tenure_bin <= 72] <- '5-6 years'
+telco$tenure_bin <- as.factor(telco$tenure_bin)
+
+telco_cat <- telco[,-c(1,6,19,20)]
+```
+
+```{r creating dummy variables}
+dummy<- data.frame(sapply(telco_cat,function(x) data.frame(model.matrix(~x-1,data =telco_cat))[,-1]))
+telco_final <- cbind(telco_int,dummy)
+View(telco_final)
+
+```
+
+```{r Splitting the data}
+set.seed(123)
+indices = sample.split(telco_final$Churn, SplitRatio = 0.7)
+train = telco_final[indices,]
+test = telco_final[!(indices),]
+```
+
+```{r}
+#MODEL-LOGISTIC REGRESSION
+
+#Build the first model using all variables
+model_1 = glm(Churn ~ ., data = train, family = "binomial")
+summary(model_1)
+```
+
+```{r Predicting significant variables}
+model_2<- stepAIC(model_1, direction="both")
+summary(model_2)
+vif(model_2)
+```
+
+```{r Final Model for Logistic Regression}
+model_3 <-glm(formula = Churn ~ tenure + MonthlyCharges + SeniorCitizen + 
+                Partner + InternetService.xFiber.optic + InternetService.xNo + 
+                OnlineSecurity + OnlineBackup + TechSupport + 
+                StreamingTV + Contract.xOne.year + Contract.xTwo.year + PaperlessBilling + 
+                PaymentMethod.xElectronic.check + tenure_bin.x1.2.years + 
+                tenure_bin.x5.6.years, family = "binomial", data = train)
+summary(model_3)
+vif(model_3)
+```
+
+```{r For running Confusion Matrix}
+model_logit <- model_3
+predict(model_logit, data = train, type = "response") -> train_prob
+predict(model_logit, newdata = test, type = "response") -> test_prob
+```
+
+```{R}
+train_pred <- factor(ifelse(train_prob >= 0.5, "Yes", "No"))
+train_actual <- factor(ifelse(train$Churn == 1, "Yes", "No"))
+test_pred <- factor(ifelse(test_prob >= 0.5, "Yes", "No"))
+test_actual <- factor(ifelse(test$Churn == 1, "Yes", "No"))
+```
+
+```{r Confusion Matrix}
+confusionMatrix(data = train_pred, reference = train_actual)
+roc <- roc(train$Churn, train_prob, plot= TRUE, print.auc=TRUE)
+```
+
+```{r Confusion Matrix}
+confusionMatrix(data = test_pred, reference = test_actual)
+roc <- roc(test$Churn, test_prob, plot= TRUE, print.auc=TRUE)
+```
+
+```{r}
+pred <- prediction(train_prob, train_actual)
+perf <- performance(pred, "spec", "sens")
+```
+
+```{r Plotting the optimal cut-off probability}
+cutoffs <- data.frame(cut=perf@alpha.values[[1]], specificity=perf@x.values[[1]], 
+                      sensitivity= perf@y.values[[1]])
+opt_cutoff <- cutoffs[which.min(abs(cutoffs$specificity-cutoffs$sensitivity)),]
+
+ggplot(data = cutoffs) +
+  geom_line(aes(x = cut, y = specificity, color ="red"), size = 1.5)+
+  geom_line(aes(x = cut, y = sensitivity, color = "blue"), size = 1.5) +
+  labs(x = "cutoff", y ="value") +
+  scale_color_discrete(name = "", labels = c("Specificity", "Sensitivity"))+
+  geom_vline(aes(xintercept = opt_cutoff$cut))+
+  geom_text(aes(x= 0.55, y= 0.75),label="opt_cutoff = 0.32",hjust=1, size=4)
+```
+
+```{r Confusion Matrix}
+train_pred_c <- factor(ifelse(train_prob >= 0.32, "Yes", "No"))
+confusionMatrix(data = train_pred_c, reference = train_actual)
+```
+
+```{r Confusion Matrix}
+test_pred_c <- factor(ifelse(test_prob >= 0.32, "Yes", "No"))
+confusionMatrix(data = test_pred_c, reference = test_actual)
+```
+
+```{r DECISION TREE}
+set.seed(123)
+telco_final$Churn <- as.factor(telco_final$Churn)
+```
+
+```{r Splitting the data}
+indices = sample.split(telco_final$Churn, SplitRatio = 0.7)
+train = telco_final[indices,]
+validation = telco_final[!(indices),]
+```
+
+```{r Building the Decision Tree}
+
+Dtree = rpart(Churn ~., data = train, method = "class")
+summary(Dtree)
+```
+
+```{r Plotting the Decision Tree}
+rpart.plot(Dtree, box.palette="RdBu", shadow.col="gray", nn=TRUE)
+```
+
+```{r Confusion Matrix}
+DTPred <- predict(Dtree,type = "class", newdata = validation[,-24])
+confusionMatrix(validation$Churn, DTPred)
+```
+
+```{r Random Forest}
+set.seed(123)
+telco_final$Churn <- as.factor(telco_final$Churn)
+```
+
+```{r Splitting the data}
+indices = sample.split(telco_final$Churn, SplitRatio = 0.7)
+train = telco_final[indices,]
+validation = telco_final[!(indices),]
+```
+
+```{r Training the RandomForest Model}
+model.rf <- randomForest(Churn ~ ., data=train, proximity=FALSE,importance = FALSE,
+                         ntree=500,mtry=4, do.trace=FALSE)
+model.rf
+plot(model.rf)
+```
+
+```{r Checking the confusion Matrix}
+testPred <- predict(model.rf, newdata=validation[,-24])
+table(testPred, validation$Churn)
+confusionMatrix(validation$Churn, testPred)
+```
+
+```{r Checking the variable Importance Plot}
+varImpPlot(model.rf)
+```
+
+```{r}
+###ARTIFICIAL NEURAL NETWORK
+##It is important to run the necessary libraries before running the artificial neural network and to acitivate tensor flow externally in the anaconda prompt command to be able to obtain the artificial neural network. For fast performance clear the console and run from line 291 to be able to achieve neural netowork model
+```
+
+```{r}
+pacman::p_load(tidyverse,readr,caret,mice,keras,rsample,recipes,yardstick,ggthemes,corrplot,corrr,tidyquant)  
+theme_set(theme_minimal())
+```
+
+```{r loading the dataset}
+churndata <- read_csv("TelcoCustomerChurn.csv")
+```
+
+```{r Frequency of Churn}
+churndata %>%
+  count(Churn)
+```
+
+```{R Removing customer ID}
+churn_data <- churndata %>%
+  select(-customerID)
+```
+
+```{R Dropping the missing values}
+churn_data <- churn_data %>%
+  drop_na()
+```
+
+```{r Splitting Data}
+set.seed(42)
+index <- createDataPartition(churn_data$Churn, p = 0.7, list = FALSE)
+traindata <- churn_data[index, ]
+testdata  <- churn_data[-index, ]
+```
+
+```{r}
+index2 <- createDataPartition(testdata$Churn, p = 0.5, list = FALSE)
+validdata <- testdata[-index2, ]
+testdata <- testdata[index2, ]
+```
+
+```{r Preprocessing with the help of recipe}
+recipe_churn <- recipe(Churn ~ ., traindata) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_center(all_predictors(), -all_outcomes()) %>%
+  step_scale(all_predictors(), -all_outcomes()) %>%
+  prep(data = traindata)
+```
+
+```{r Converting to machine learning data using bake function}
+traindata <- bake(recipe_churn, new_data = traindata) %>%
+  select(Churn, everything())
+
+validdata <- bake(recipe_churn, new_data = validdata) %>%
+  select(Churn, everything())
+
+testdata <- bake(recipe_churn, new_data = testdata) %>%
+  select(Churn, everything())
+```
+
+```{r Some more preprocessing}
+train_y_drop <- to_categorical(as.integer(as.factor(traindata$Churn)) - 1, 2)
+colnames(train_y_drop) <- c("No", "Yes")
+
+valid_y_drop <- to_categorical(as.integer(as.factor(validdata$Churn)) - 1, 2)
+colnames(valid_y_drop) <- c("No", "Yes")
+
+test_y_drop <- to_categorical(as.integer(as.factor(testdata$Churn)) - 1, 2)
+colnames(test_y_drop) <- c("No", "Yes")
+```
+
+```{r}
+train_y_drop <- train_y_drop[, 2, drop = FALSE]
+head(train_y_drop)
+valid_y_drop <- valid_y_drop[, 2, drop = FALSE]
+test_y_drop <- test_y_drop[, 2, drop = FALSE]
+```
+
+```{r}
+train_data_bk <- select(traindata, -Churn)
+head(train_data_bk)
+valid_data_bk <- select(validdata, -Churn)
+test_data_bk <- select(testdata, -Churn)
+```
+
+```{r Response Variables}
+traindata$Churn <- ifelse(traindata$Churn == "Yes", 1, 0)
+validdata$Churn <- ifelse(validdata$Churn == "Yes", 1, 0)
+testdata$Churn <- ifelse(testdata$Churn == "Yes", 1, 0)
+```
+
+```{r Initializing Keras}
+model_keras <- keras_model_sequential()
+```
+
+```{r Building the model}
+model_keras %>% 
+  layer_dense(units = 32, kernel_initializer = "uniform", activation = "relu", 
+              input_shape = ncol(train_data_bk)) %>% 
+  layer_dropout(rate = 0.2) %>%
+  
+  layer_dense(units = 16, kernel_initializer = "uniform", activation = "relu") %>% 
+  layer_dropout(rate = 0.2) %>%
+  
+  layer_dense(units = 8, kernel_initializer = "uniform", activation = "relu") %>% 
+  layer_dropout(rate = 0.2) %>%
+  
+  layer_dense(units = 1,
+              kernel_initializer = "uniform", activation = "sigmoid") %>%
+  
+  compile(
+    optimizer = 'adamax',
+    loss      = 'binary_crossentropy',
+    metrics   = c("binary_accuracy", "mse")
+  )
+```
+
+```{r}
+summary(model_keras)
+```
+
+```{R Fitting the model}
+fit_keras <- fit(model_keras, 
+                 x = as.matrix(train_data_bk), 
+                 y = train_y_drop,
+                 batch_size = 32, 
+                 epochs = 20,
+                 validation_data = list(as.matrix(valid_data_bk), valid_y_drop),
+                 verbose = 2
+)
+
+print(fit_keras)
+```
+
+```{r}
+plot(fit_keras) +
+  scale_color_tableau() +
+  scale_fill_tableau()
+```
+
+```{r}
+pred_classes_test <- predict_classes(object = model_keras, x = as.matrix(test_data_bk))
+pred_proba_test  <- predict_proba(object = model_keras, x = as.matrix(test_data_bk))
+```
+
+```{r}
+test_results <- tibble(
+  actual_yes = as.factor(as.vector(test_y_drop)),
+  pred_classes_test = as.factor(as.vector(pred_classes_test)),
+  Yes = as.vector(pred_proba_test), 
+  No = 1 - as.vector(pred_proba_test))
+head(test_results)
+```
+
+```{r Confusion Matrix}
+test_results %>% 
+  conf_mat(actual_yes, pred_classes_test)
+```
+
+```{r}
+test_results %>% 
+  metrics(actual_yes, pred_classes_test)
+```
+
+```{r Finding precision and recall}
+tibble(
+  precision = test_results %>% yardstick::precision(actual_yes, pred_classes_test) %>% select(.estimate) %>% as.numeric(),
+  recall    = test_results %>% yardstick::recall(actual_yes, pred_classes_test) %>% select(.estimate) %>% as.numeric()
+)
+```
+
+```{r}
+test_results %>% yardstick::f_meas(actual_yes, pred_classes_test, beta = 1)
+```
+
+```{r Correlation Analysis}
+corrr_analysis <- train_data_bk %>%
+  mutate(Churn = train_y_drop) %>%
+  correlate() %>%
+  focus(Churn) %>%
+  rename(feature = rowname) %>%
+  arrange(abs(Churn)) %>%
+  mutate(feature = as_factor(feature)) 
+corrr_analysis
+```
+
+```{r}
+# Correlation visualization
+corrr_analysis %>%
+  ggplot(aes(x = Churn, y = fct_reorder(feature, desc(Churn)))) +
+  geom_point() +
+  geom_segment(aes(xend = 0, yend = feature), 
+               color = palette_light()[[2]], 
+               data = corrr_analysis %>% filter(Churn > 0)) +
+  geom_point(color = palette_light()[[2]], 
+             data = corrr_analysis %>% filter(Churn > 0)) +
+  geom_segment(aes(xend = 0, yend = feature), 
+               color = palette_light()[[1]], 
+               data = corrr_analysis %>% filter(Churn < 0)) +
+  geom_point(color = palette_light()[[1]], 
+             data = corrr_analysis %>% filter(Churn < 0)) +
+  geom_vline(xintercept = 0, color = palette_light()[[5]], size = 1, linetype = 2) +
+  geom_vline(xintercept = -0.25, color = palette_light()[[5]], size = 1, linetype = 2) +
+  geom_vline(xintercept = 0.25, color = palette_light()[[5]], size = 1, linetype = 2) +
+  theme_tq() +
+  labs(title = "Churn Correlation Analysis",
+       subtitle = paste("Positive Correlations (contribute to churn),",
+                        "Negative Correlations (prevent churn)"),
+       y = "Feature Importance")
+```
+
+
+
+
+
